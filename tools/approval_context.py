@@ -169,6 +169,65 @@ def _is_cron_approval_context() -> bool:
     return is_truthy_value(_session_env("HERMES_CRON_SESSION"))
 
 
+# Single source of truth for the inbound Bot Chat turn text cron/scheduler_delivery.py's
+# bot_chat_message() builds for a scheduled job's output (job_name is the only variable part
+# between them). cron.scheduler_delivery imports these same two constants to build that text,
+# so the producer and this module's detector can never drift out of sync (AUDIT_2026-1023-F R6).
+_CRON_BOT_CHAT_TEXT_PREFIX = '[Cronjob "'
+_CRON_BOT_CHAT_TEXT_MARKER = '" output — scheduled job, not the user.'
+
+# Task-local staging for the inbound event text of the turn ``_hmwa_prepare_turn`` is about to
+# bind session env for. ``gateway.run.TurnRunner._set_session_env`` has ~44 call sites and test
+# doubles across 30 test files that replace it with a 1-argument lambda (``lambda _context:
+# None``); adding an ``event`` parameter to that method breaks every one of those doubles with a
+# TypeError the instant the real call site passes a second positional argument (AUDIT_2026-1023-F
+# R5). Staging the text here instead lets ``_set_session_env`` keep its original one-argument
+# shape while still being able to classify the turn — see ``set_current_turn_event_text`` /
+# ``_current_turn_is_cron_delivered_bot_chat``.
+_cron_turn_event_text: contextvars.ContextVar[str] = _ctx("cron_turn_event_text")
+
+
+def set_current_turn_event_text(text: str | None) -> contextvars.Token[str]:
+    """Bind the inbound event text of the turn now being prepared, so a later, parameter-free
+    ``_set_session_env()`` call on the same task can still classify it as cron-delivered."""
+    return _cron_turn_event_text.set(text or "")
+
+
+def reset_current_turn_event_text(token: contextvars.Token[str]) -> None:
+    """Restore the prior staged turn event text context."""
+    _cron_turn_event_text.reset(token)
+
+
+def _is_cron_delivered_bot_chat_text(text) -> bool:
+    """True when *text* is a cron job's output admitted as an inbound Bot Chat turn
+    (cron/scheduler_delivery.py:bot_chat_message()), not a message a live human or another live
+    agent actually typed into this chat right now.
+
+    This exists because that admission path (tools/bot_live_delivery.py
+    deliver_to_live_owner()) lands the output in the SAME persistent ``platform=local`` Bot
+    Chat session a human/agent also messages through interactively — so
+    ``HERMES_SESSION_PLATFORM`` alone cannot distinguish an unattended cron-triggered turn from
+    a genuinely-attended one the way ``_is_unattended_platform_approval_context()`` does for
+    webhook/api_server (#37284/#87509). Without this, a dangerous command issued during a
+    cron-delivered turn blocks the full approval timeout (60-300s) waiting for a human who was
+    never watching, then fails closed anyway — the same deadlock shape, just reached through a
+    different platform.
+
+    Scans the full text (no fixed-size window): an earlier revision truncated to the first 200
+    characters, which went false-negative for any job name >= 152 characters (no length cap
+    exists on a user-supplied cron job name) — AUDIT_2026-1023-F R7.
+    """
+    if not isinstance(text, str) or not text:
+        return False
+    return text.startswith(_CRON_BOT_CHAT_TEXT_PREFIX) and _CRON_BOT_CHAT_TEXT_MARKER in text
+
+
+def _current_turn_is_cron_delivered_bot_chat() -> bool:
+    """True when the turn now being prepared (bound via ``set_current_turn_event_text``) is a
+    cron job's output admitted as an inbound Bot Chat turn."""
+    return _is_cron_delivered_bot_chat_text(_cron_turn_event_text.get())
+
+
 # Programmatic/unattended platforms: no human can answer a prompt and the adapter has no ``send_exec_approval`` /
 # ``/approve`` surface. Governed by ``approvals.unattended_mode`` (default deny), mirroring ``cron_mode`` — never an
 # interactive round-trip that blocks for the full timeout with nobody to answer.

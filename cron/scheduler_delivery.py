@@ -698,12 +698,18 @@ def bot_chat_message(job: dict, content: str) -> str:
     live owner's durable admission record, so it gets the same fail-closed scrub as the chat
     message and the session mirror; the admitted record carries the scrubbed copy, never the raw
     output.
+
+    The wrapper's prefix/marker literals are imported from ``tools.approval_context`` rather than
+    inlined here: that module's ``_is_cron_delivered_bot_chat_text()`` detects this exact wrapper
+    to flag the turn as a cron (unattended) approval context, and a hand-copied literal on either
+    side can silently drift out of sync with the other (AUDIT_2026-1023-F R6).
     """
+    from tools.approval_context import _CRON_BOT_CHAT_TEXT_MARKER, _CRON_BOT_CHAT_TEXT_PREFIX
     content = _redact_cron_payload(content, "bot-chat payload")
     job_name = _redact_cron_payload(job.get("name", job.get("id", "?")), "job name")
     return (
-        f'[Cronjob "{job_name}" output — '
-        f"scheduled job, not the user. Review it, act on anything that needs action, and "
+        f"{_CRON_BOT_CHAT_TEXT_PREFIX}{job_name}{_CRON_BOT_CHAT_TEXT_MARKER} "
+        f"Review it, act on anything that needs action, and "
         f"summarize for the chat.]\n\n{content}"
     )
 

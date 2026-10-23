@@ -3976,7 +3976,17 @@ class GatewayRunner(
 
     def _set_session_env(self, context: SessionContext) -> list:
         """Set session context variables (contextvars, not os.environ, so concurrent messages can't
-        overwrite each other). Returns reset tokens for ``_clear_session_env`` in a ``finally``."""
+        overwrite each other). Returns reset tokens for ``_clear_session_env`` in a ``finally``.
+
+        Deliberately keeps this one-argument shape (``context`` only): ~44 call sites across 30
+        test files replace this method wholesale with a 1-argument lambda test double, so adding
+        an ``event`` parameter here would be a no-op for production but a TypeError for every one
+        of those doubles the instant a call site passed a second positional argument
+        (AUDIT_2026-1023-F R5). Cron-turn classification instead reads a task-local contextvar
+        ``_hmwa_prepare_turn`` stages just before calling this — see
+        ``tools.approval_context.set_current_turn_event_text`` /
+        ``_current_turn_is_cron_delivered_bot_chat``.
+        """
         from gateway.session_context import set_session_vars
         # Async-delivery capability tells async tools whether this channel can wake a later turn. Default
         # True keeps CLI/unknown paths working; stateless adapters (api_server) declare False.
@@ -3987,6 +3997,8 @@ class GatewayRunner(
         from gateway.session_api_turn import api_session_vars
         _api_vars = api_session_vars()
         _history_delivery = _api_vars.pop("session_history_delivery", None)
+        from tools.approval_context import _current_turn_is_cron_delivered_bot_chat
+        _cron_session = "1" if _current_turn_is_cron_delivered_bot_chat() else ""
         return set_session_vars(
             platform=context.source.platform.value,
             chat_id=context.source.chat_id,
@@ -4005,7 +4017,7 @@ class GatewayRunner(
             message_id=str(context.source.message_id) if context.source.message_id else "",
             profile=getattr(context.source, "profile", "") or "",
             async_delivery=_async_delivery,
-            cron_session="", session_history_delivery=_history_delivery, **_api_vars)
+            cron_session=_cron_session, session_history_delivery=_history_delivery, **_api_vars)
 
     def _clear_session_env(self, tokens: list) -> None:
         """Restore session context variables to their pre-handler values."""

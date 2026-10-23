@@ -640,8 +640,16 @@ class GatewayTurnPrepareMixin:
         _was_auto_reset, _is_new_session = await self._hmwa_open_session(session_entry, session_key, source)
         restore_gateway_yolo(session_key, session_entry.yolo)  # None: TurnRunner seeds the launch policy
         context = build_session_context(source, self.config, session_entry)
-        # Session context variables for tools (task-local, concurrency-safe)
-        _session_env_tokens = self._set_session_env(context)
+        # Session context variables for tools (task-local, concurrency-safe). Stage the inbound
+        # event's text first so _set_session_env (unchanged 1-arg signature — see its docstring,
+        # AUDIT_2026-1023-F R5) can classify a cron-delivered Bot Chat turn via
+        # tools.approval_context._current_turn_is_cron_delivered_bot_chat().
+        from tools.approval_context import reset_current_turn_event_text, set_current_turn_event_text
+        _cron_evt_token = set_current_turn_event_text(getattr(event, "text", None))
+        try:
+            _session_env_tokens = self._set_session_env(context)
+        finally:
+            reset_current_turn_event_text(_cron_evt_token)
         # Self-injected turns (internal=True) persist with a DB-only display_kind: timeline notices, not user bubbles.
         from gateway.response_filters import display_kind_for_event
         persist_user_display_kind = display_kind_for_event(event)
