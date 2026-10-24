@@ -937,7 +937,7 @@ class GatewayShutdownMixin(GatewaySessionEndMixin):
                 # See #43014.
                 targets = _resolve_delivery_targets(job, for_failure=True)
             except Exception as e:
-                logger.debug("Cron interrupt targets unresolved for %s: %s", job_id, e)
+                logger.warning("Cron interrupt targets unresolved for %s: %s", job_id, e)
                 continue
             job_name = job.get("name") or job_id
             msg = t("gateway.shutdown.cron_interrupted", job=job_name, action=action)
@@ -1935,7 +1935,7 @@ class GatewayShutdownMixin(GatewaySessionEndMixin):
         _interrupted_cron_jobs = await GatewayRunner._stop_kill_tool_subprocesses_off_loop("post-interrupt")
         logger.info("Shutdown phase: post-interrupt tool kill done at +%.2fs", ctx.elapsed())
         # Last window with the transport up (the cron worker's own notice arrives after teardown).
-        with _log_suppressed(logging.DEBUG, "Cron interrupt notification failed: %s"):
+        with _log_suppressed(logging.WARNING, "Cron interrupt notification failed: %s"):
             # The cron worker whose run we just killed will try to deliver its own "interrupted" notice, but
             # it gets there after the adapter teardown below and the message is lost (#82232).
             await self._notify_interrupted_cron_jobs(_interrupted_cron_jobs)
