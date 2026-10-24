@@ -10,11 +10,14 @@ lazily at call time so ``patch("tools.x.y")`` in tests keeps working.
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from importlib import import_module
 from typing import Any, Callable, Dict, Optional, Tuple
 
 from tools.arg_coercion import coerce_tool_args
+
+logger = logging.getLogger(__name__)
 
 
 def tool_hook_ids(agent, effective_task_id: str, tool_call_id: Optional[str]) -> dict[str, str]:
@@ -43,6 +46,14 @@ def emit_terminal_post_tool_call(
     middleware_trace: Optional[list] = None,
 ) -> None:
     """Emit the one terminal ``post_tool_call`` hook for a tool_call_id (best-effort)."""
+    # TEMP BREADCRUMB (t_69f9de8a, 20h/first-capture timebox, 수호자 승인 2026-10-24,
+    # 순수로깅만/로직변경 0줄). 제거조건: 타임박스 만료 또는 포착 성공.
+    # AUDIT_2026-1024-H D-2 교정: INFO로 낮춰 errors.log(WARNING+)를 전혀 거치지 않도록 하고
+    # agent.log 실측 보존한도(패치후 25.1h)에 안전마진을 둔 20h로 재선언(기존 72h는 비현실적).
+    logger.info(
+        "BREADCRUMB t_69f9de8a: emit_terminal_post_tool_call ENTER tool=%s session=%s "
+        "tool_call_id=%s", function_name, tool_hook_ids(agent, effective_task_id, tool_call_id).get("session_id"), tool_call_id,
+    )
     try:
         from model_tools import _emit_post_tool_call_hook
         _emit_post_tool_call_hook(
@@ -56,8 +67,11 @@ def emit_terminal_post_tool_call(
             error_message=error_message,
             middleware_trace=list(middleware_trace or []),
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.info(
+            "BREADCRUMB t_69f9de8a: emit_terminal_post_tool_call EXCEPTION tool=%s "
+            "tool_call_id=%s err=%r", function_name, tool_call_id, exc,
+        )
 
 
 def apply_transform_tool_result(

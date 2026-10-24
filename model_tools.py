@@ -680,11 +680,28 @@ def _emit_post_tool_call_hook(
 ) -> None:
     """Emit the ``post_tool_call`` observer hook; gated on has_hook, and ok/error
     fields are derived from the result only past that gate when status is None."""
+    # TEMP BREADCRUMB (t_69f9de8a, 20h/first-capture timebox, 수호자 승인 2026-10-24,
+    # 순수로깅만/로직변경 0줄). 제거조건: 타임박스 만료 또는 포착 성공.
+    # AUDIT_2026-1024-H D-2 교정: INFO로 낮춰 errors.log(WARNING+)를 전혀 거치지 않도록 하고
+    # agent.log 실측 보존한도(패치후 25.1h)에 안전마진을 둔 20h로 재선언(기존 72h는 비현실적).
+    logger.info(
+        "BREADCRUMB t_69f9de8a: _emit_post_tool_call_hook ENTER tool=%s session=%s "
+        "suppressed=%s tool_call_id=%s",
+        function_name, session_id, _post_tool_call_hook_suppressed.get(), tool_call_id,
+    )
     if _post_tool_call_hook_suppressed.get():
+        logger.info(
+            "BREADCRUMB t_69f9de8a: _emit_post_tool_call_hook SKIPPED(suppressed) "
+            "tool=%s session=%s tool_call_id=%s", function_name, session_id, tool_call_id,
+        )
         return
     try:
         from hermes_cli.lifecycle import has_hook, invoke_hook
         if not has_hook("post_tool_call"):
+            logger.info(
+                "BREADCRUMB t_69f9de8a: _emit_post_tool_call_hook SKIPPED(no_hook_registered) "
+                "tool=%s session=%s tool_call_id=%s", function_name, session_id, tool_call_id,
+            )
             return
         if status is None:
             status, error_type, error_message = _tool_result_observer_fields(function_name, result)
@@ -694,7 +711,15 @@ def _emit_post_tool_call_hook(
             duration_ms=duration_ms, status=status, error_type=error_type, error_message=error_message,
             middleware_trace=list(middleware_trace or []),
         )
+        logger.info(
+            "BREADCRUMB t_69f9de8a: _emit_post_tool_call_hook invoke_hook RETURNED(ok) "
+            "tool=%s session=%s tool_call_id=%s", function_name, session_id, tool_call_id,
+        )
     except Exception as _hook_err:
+        logger.info(
+            "BREADCRUMB t_69f9de8a: _emit_post_tool_call_hook EXCEPTION tool=%s session=%s "
+            "tool_call_id=%s err=%r", function_name, session_id, tool_call_id, _hook_err,
+        )
         logger.debug("post_tool_call hook error: %s", _hook_err)
 
 
