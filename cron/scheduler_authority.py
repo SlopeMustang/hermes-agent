@@ -158,7 +158,7 @@ def reconcile_pending(*, allow_connect=True):
     from cron.executions import execution_owner_live, get_execution
     from cron.jobs import get_job, pause_job
     from cron.scheduler import (_RunDelivery, _FireOwnership, _apply_agent_failure_marker,
-                                _save_compose_deliver)
+                                _fire_secret_scope, _save_compose_deliver)
     from cron.scheduler_bookkeeping import fail_empty_response, finish_completed_run
     from utils import atomic_json_write
     import logging
@@ -221,10 +221,17 @@ def reconcile_pending(*, allow_connect=True):
             # The canonical receipt supplies the result; a dead scheduler's fire claim does not
             # authorize replay and must not prevent finishing its durable bookkeeping.
             fence = _FireOwnership(dict(job, fire_claim=None))
-            _save_compose_deliver(delivery, fence, answer, output, adapters=None, loop=None,
-                                 verbose=False, execution_token=None)
-            fail_empty_response(delivery, answer)
-            if finish_completed_run(delivery, None, params['request_id'], recovered=True):
-                _lift_pause(params['job_id'], record.get('pause_recorded'))
+            # Unlike the ordinary run_one_job tail (claim_dispatch..save/compose/deliver all run
+            # inside _install_fire_secret_scope()), this recovery path never installed the firing
+            # profile's secret scope: get_secret() inside _resolve_delivery_targets failed closed
+            # under multiplex for any secret-backed home target (MATRIX_HOME_ROOM et al), and the
+            # except-block below swallowed it without retiring the journal -- the same stuck
+            # receipt re-raised on every subsequent tick forever (#MATRIX_HOME_ROOM, 1934x).
+            with _fire_secret_scope():
+                _save_compose_deliver(delivery, fence, answer, output, adapters=None, loop=None,
+                                     verbose=False, execution_token=None)
+                fail_empty_response(delivery, answer)
+                if finish_completed_run(delivery, None, params['request_id'], recovered=True):
+                    _lift_pause(params['job_id'], record.get('pause_recorded'))
         except Exception:
             logging.getLogger(__name__).warning('Cron receipt recovery deferred: %s', journal, exc_info=True)
