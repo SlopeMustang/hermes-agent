@@ -1699,7 +1699,14 @@ class GatewayNotificationsMixin(GatewayUpdateNotificationsMixin, GatewayNotifica
         if len(_raw) > _LIMIT:
             _tail = _raw[-_LIMIT:]
             _nl = _tail.find("\n")
-            _tail = _tail[_nl + 1:] if _nl != -1 else _tail
+            _snapped = _tail[_nl + 1:] if _nl != -1 else _tail
+            # Snapping to the nearest newline can backfire when the tail is one huge
+            # single-line blob (e.g. unformatted JSON) whose only '\n' is the output's own
+            # trailing newline near the very end -- that would throw away almost the whole
+            # tail (observed: collapsed to 0 chars shown). Fall back to the unsnapped tail
+            # when snapping would leave too little content to be useful.
+            _MIN_SNAPPED_CHARS = 200
+            _tail = _snapped if len(_snapped) >= _MIN_SNAPPED_CHARS else _tail
             _out = f"[… output truncated — showing last {len(_tail)} chars]\n{_tail}"
         else:
             _out = _raw
